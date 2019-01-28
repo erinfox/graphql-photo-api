@@ -105,7 +105,7 @@ const start = async () => {
   server
     .listen()
     .then(({ port }) => `server listening on ${port}`)
-    .then(console.log)
+    .then(console.log(process.env.DB_HOST))
     .catch(console.error);
 };
 
