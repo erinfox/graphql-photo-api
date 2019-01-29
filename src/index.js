@@ -1,5 +1,6 @@
 const { ApolloServer, gql } = require('apollo-server');
 const { MongoClient, ObjectID } = require('mongodb');
+const { authorizeWithGithub } = require('./lib');
 
 const typeDefs = gql`
   type Photo {
@@ -14,6 +15,7 @@ const typeDefs = gql`
   type User {
     githubLogin: ID!
     name: String!
+    avatar: String!
     postedPhotos: [Photo!]!
   }
 
@@ -30,6 +32,11 @@ const typeDefs = gql`
     category: PhotoCategory = PORTRAIT
   }
 
+  type AuthPayload {
+    token: String!
+    user: User!
+  }
+
   type Query {
     totalPhotos: Int!
     allPhotos: [Photo!]!
@@ -41,6 +48,7 @@ const typeDefs = gql`
 
   type Mutation {
     postPhoto(input: PostPhotoInput!): Photo!
+    githubAuth(code: String!): AuthPayload!
   }
 `;
 
@@ -68,8 +76,36 @@ const resolvers = {
 
       const { insertedId } = await photos.insertOne(newPhoto);
       newPhoto.id = insertedId.toString();
-      console.log(newPhoto);
+
       return newPhoto;
+    },
+    githubAuth: async (parent, { code }, { users }) => {
+      const payload = await authorizeWithGithub({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code,
+      });
+
+      if (payload.message) {
+        throw new Error(payload.message);
+      }
+
+      const githubUserInfo = {
+        githubLogin: payload.login,
+        name: payload.name,
+        avatar: payload.avatar_url,
+        githubToken: payload.access_token,
+      };
+
+      const {
+        ops: [user],
+      } = await users.replaceOne(
+        { githubLogin: payload.login },
+        githubUserInfo,
+        { upsert: true },
+      );
+
+      return { user, token: user.githubToken };
     },
   },
   Photo: {
@@ -84,7 +120,6 @@ const resolvers = {
   },
 };
 
-// connecting to the db ---------------------------------------------
 const start = async () => {
   const client = await MongoClient.connect(
     process.env.DB_HOST,
@@ -104,8 +139,10 @@ const start = async () => {
 
   server
     .listen()
+    .then(console.log('Client ID', process.env.GITHUB_CLIENT_ID))
+    .then(console.log('Client Secret', process.env.GITHUB_CLIENT_SECRET))
     .then(({ port }) => `server listening on ${port}`)
-    .then(console.log(process.env.DB_HOST))
+    .then(console.log)
     .catch(console.error);
 };
 
